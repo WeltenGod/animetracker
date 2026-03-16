@@ -13,7 +13,23 @@ This is a lightweight Node.js application designed to run in a Proxmox container
 
 ---
 
-## 🚀 Setup Instructions for Proxmox / Local Server
+## 🚀 Easy Setup (Debian 13 / Proxmox)
+
+If you are running **Debian 13** (Trixie) in a Proxmox container, there is a handy auto-install script provided!
+
+```bash
+git clone <your-repo-url>
+cd anime-sync-app
+sudo ./install.sh
+```
+
+The script will automatically update the system, install Node.js (v20 LTS), PM2, and SQLite. It will also copy the environment files, install NPM packages, initialize the database, and start the application as a background service using PM2 that persists across reboots.
+
+After running the script, skip to Step 2 below to configure your `.env` file!
+
+---
+
+## 🛠️ Manual Setup Instructions
 
 ### 1. Clone & Install
 Log into your Proxmox container, navigate to the directory where you want to host this, and run:
@@ -21,7 +37,7 @@ Log into your Proxmox container, navigate to the directory where you want to hos
 ```bash
 git clone <your-repo-url>
 cd anime-sync-app
-npm install
+npm ci
 ```
 
 ### 2. Configure Environment Variables
@@ -61,15 +77,17 @@ MAL_REDIRECT_URI=http://192.168.1.50:3000/auth/mal/callback
 ```
 
 ### 3. Start the Server
+*(Skip this step if you used `install.sh` as PM2 will already be running)*
+
 Run the database initializer, then start the server:
 ```bash
 node database.js
-npm start
+node server.js
 ```
 
 *Note: For a production Proxmox container, it's highly recommended to use a process manager like `pm2` to keep the app running in the background:*
 ```bash
-npm install -g pm2
+npm i -g pm2
 pm2 start server.js --name anime-sync
 pm2 save
 pm2 startup
