@@ -65,6 +65,7 @@ echo "    Starting the Application                            "
 echo "========================================================"
 
 echo ">> Starting application with pm2..."
+pm2 delete anime-sync 2>/dev/null || true
 pm2 start server.js --name anime-sync
 pm2 save
 
