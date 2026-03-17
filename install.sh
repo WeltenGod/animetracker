@@ -1,200 +1,79 @@
 #!/bin/bash
 
-# ==============================================================================
-# Syncro Installation Script for Debian 13 (Proxmox LXC)
-# ==============================================================================
+# Anime Watch Party Sync - Debian 13 (Trixie) Installation Script
+# Run this script with root privileges (sudo)
 
-set -e
-
-# --- Pre-flight Checks ---
+set -e # Exit immediately if a command exits with a non-zero status
 
 # Ensure script is run as root
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run this script as root (e.g., sudo ./install.sh)"
+  echo "Please run this script as root (use sudo)."
   exit 1
 fi
 
-echo "Starting Syncro installation..."
+echo "========================================================"
+echo "    Installing Dependencies for Anime Sync Application  "
+echo "========================================================"
 
-# ==============================================================================
-# 1. System Updates and Dependencies
-# ==============================================================================
+echo ">> Updating system packages..."
+apt update && apt upgrade -y
 
-echo "Updating system packages..."
-apt-get update
-apt-get upgrade -y
+echo ">> Installing required utilities (curl, git, build-essential)..."
+apt install -y curl git build-essential sqlite3
 
-echo "Installing essential dependencies..."
-apt-get install -y curl build-essential git sqlite3 nginx
+echo ">> Installing Node.js (via NodeSource)..."
+# Debian 13 supports the latest LTS (e.g., Node 20 or 22)
+curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh
+bash nodesource_setup.sh
+apt install -y nodejs
+rm nodesource_setup.sh
 
-echo "Installing Node.js v20 LTS..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
+echo ">> Installing pm2 globally for process management..."
+npm install -g pm2
 
-# Verify Node installation
-NODE_VERSION=$(node -v)
-NPM_VERSION=$(npm -v)
-echo "Installed Node.js $NODE_VERSION and npm $NPM_VERSION"
+echo "========================================================"
+echo "    Setting up the Application                          "
+echo "========================================================"
 
-# ==============================================================================
-# 2. Application Directory and User Setup
-# ==============================================================================
-
-APP_USER="syncro"
-APP_DIR="/opt/syncro"
-
-echo "Setting up application user and directory..."
-
-# Create non-root system user if it doesn't exist
-if id -u "$APP_USER" >/dev/null 2>&1; then
-    echo "User $APP_USER already exists."
+# Check if we are already inside the cloned repository
+if [ -f "package.json" ] && grep -q "anime-watch-party-sync" package.json 2>/dev/null; then
+  echo ">> Found application files in current directory."
+  APP_DIR=$(pwd)
 else
-    echo "Creating user $APP_USER..."
-    useradd -r -s /bin/false -d "$APP_DIR" "$APP_USER"
+  # Otherwise, create a directory and copy everything here, or clone if this was standalone
+  # For the sake of this script, we assume they clone first, then run install.sh from inside it.
+  echo ">> Assuming we are in the application root."
+  APP_DIR=$(pwd)
 fi
 
-# Ensure application directory exists
-mkdir -p "$APP_DIR"
+echo ">> Installing npm dependencies..."
+npm install
 
-# Copy files from the current directory to the target directory
-echo "Copying application files to $APP_DIR..."
-# We use rsync to exclude unnecessary files like .git or node_modules
-# Since rsync isn't always installed by default, we'll install it or fallback to cp
-if ! command -v rsync &> /dev/null; then
-    apt-get install -y rsync
-fi
-rsync -av --exclude='.git' --exclude='node_modules' --exclude='install.sh' ./ "$APP_DIR/"
-
-# Set ownership
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-
-# ==============================================================================
-# 3. Interactive Environment Configuration
-# ==============================================================================
-
-ENV_FILE="$APP_DIR/.env"
-
-echo ""
-echo "--------------------------------------------------"
-echo "Syncro Environment Setup"
-echo "--------------------------------------------------"
-echo "We need to configure the .env file with your specific API credentials."
-echo "If you don't have these yet, you can edit $ENV_FILE later."
-echo ""
-
-# Default port
-APP_PORT=3000
-
-read -p "Enter AniList Client ID: " AL_CLIENT_ID
-read -p "Enter AniList Client Secret: " AL_CLIENT_SECRET
-read -p "Enter MyAnimeList Client ID: " MAL_CLIENT_ID
-read -p "Enter MyAnimeList Client Secret: " MAL_CLIENT_SECRET
-read -p "Enter a secure random string for Session Secret: " SESSION_SECRET
-
-if [ -z "$SESSION_SECRET" ]; then
-    echo "Generating a random session secret..."
-    SESSION_SECRET=$(openssl rand -hex 32)
+echo ">> Setting up environment file..."
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo ">> Created .env from .env.example. Please edit .env with your API keys later."
+else
+  echo ">> .env file already exists, skipping."
 fi
 
-echo "Writing configuration to $ENV_FILE..."
-cat > "$ENV_FILE" << EOF
-# Auto-generated by install.sh
-PORT=$APP_PORT
-SESSION_SECRET=$SESSION_SECRET
+echo ">> Initializing database..."
+node database.js
 
-# AniList OAuth
-ANILIST_CLIENT_ID=$AL_CLIENT_ID
-ANILIST_CLIENT_SECRET=$AL_CLIENT_SECRET
+echo "========================================================"
+echo "    Starting the Application                            "
+echo "========================================================"
 
-# MyAnimeList OAuth
-MAL_CLIENT_ID=$MAL_CLIENT_ID
-MAL_CLIENT_SECRET=$MAL_CLIENT_SECRET
-EOF
+echo ">> Starting application with pm2..."
+pm2 start server.js --name anime-sync
+pm2 save
+pm2 startup | tail -n 1 > /tmp/pm2_startup.sh && bash /tmp/pm2_startup.sh
+rm /tmp/pm2_startup.sh
 
-# Ensure secure permissions on the .env file
-chown "$APP_USER:$APP_USER" "$ENV_FILE"
-chmod 600 "$ENV_FILE"
-
-# ==============================================================================
-# 4. Install Node.js Packages
-# ==============================================================================
-
-echo "Installing Node.js dependencies in $APP_DIR..."
-# Switch to the application directory and run npm install as the application user
-cd "$APP_DIR"
-sudo -u "$APP_USER" npm install --production
-
-# ==============================================================================
-# 5. Configure Nginx Reverse Proxy
-# ==============================================================================
-
-echo "Configuring Nginx..."
-
-# Create Nginx configuration for Syncro
-NGINX_CONF="/etc/nginx/sites-available/syncro"
-cat > "$NGINX_CONF" << EOF
-server {
-    listen 80;
-    server_name _; # Catch-all, since it's locally accessed via IP
-
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-
-        # Real IP headers
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-
-# Enable the site and remove default
-ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-
-# Test and restart Nginx
-nginx -t
-systemctl restart nginx
-
-# ==============================================================================
-# 6. Configure systemd Service
-# ==============================================================================
-
-echo "Setting up systemd service..."
-
-SERVICE_FILE="/etc/systemd/system/syncro.service"
-cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=Syncro - Anime Synchronization App
-Documentation=https://github.com/
-After=network.target
-
-[Service]
-Environment=NODE_ENV=production
-Type=simple
-User=$APP_USER
-WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/node server.js
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Reload systemd, enable and start service
-systemctl daemon-reload
-systemctl enable syncro
-systemctl start syncro
-
-echo "--------------------------------------------------"
-echo "Installation Complete!"
-echo "--------------------------------------------------"
-echo "Syncro should now be running in the background."
-echo "You can access it by navigating to this container's IP address in your browser."
-echo "To check the application logs, run: sudo journalctl -u syncro -f"
-echo "=================================================="
+echo "========================================================"
+echo "    Installation Complete!                              "
+echo "========================================================"
+echo "1. The app is running via pm2 on port 3000."
+echo "2. You MUST edit the .env file in ${APP_DIR} to add your AniList and MyAnimeList API keys."
+echo "3. Run 'pm2 restart anime-sync' after updating the .env file."
+echo "4. Access the app at http://<your_server_ip>:3000"
