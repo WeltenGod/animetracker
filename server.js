@@ -34,7 +34,6 @@ app.get('/', (req, res) => {
     html += `
         <ul>
             <li><a href="/auth/anilist">Connect AniList</a></li>
-            <li><a href="/auth/mal">Connect MyAnimeList</a></li>
         </ul>
         <p>Dashboard functionality coming soon.</p>
     `;
