@@ -67,8 +67,9 @@ echo "========================================================"
 echo ">> Starting application with pm2..."
 pm2 start server.js --name anime-sync
 pm2 save
-pm2 startup | tail -n 1 > /tmp/pm2_startup.sh && bash /tmp/pm2_startup.sh
-rm /tmp/pm2_startup.sh
+
+# Automatically setup PM2 startup script for the current user (root)
+env PATH=$PATH:/usr/bin pm2 startup systemd -u root --hp /root
 
 echo "========================================================"
 echo "    Installation Complete!                              "
