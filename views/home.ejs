@@ -17,13 +17,14 @@
 
     <div class="card" style="background: white;">
         <h4>Select Users to Sync:</h4>
+        <div id="progressLoader" class="loader" style="display: none; margin-bottom: 10px;">Fetching user progress...</div>
         <% if (users && users.length > 0) { %>
             <ul class="user-list">
                 <% users.forEach(user => { %>
                     <li>
                         <label>
                             <input type="checkbox" name="selectedUsers" value="<%= user.id %>" checked>
-                            <%= user.name %>
+                            <span class="user-name-label" data-user-id="<%= user.id %>" data-original-name="<%= user.name %>"><%= user.name %></span>
                         </label>
                     </li>
                 <% }) %>
@@ -52,6 +53,9 @@
     const syncSection = document.getElementById('syncSection');
     const selectedAnimeTitle = document.getElementById('selectedAnimeTitle');
     const selectedAnimeIdInput = document.getElementById('selectedAnimeId');
+
+    const progressLoader = document.getElementById('progressLoader');
+    const userLabels = document.querySelectorAll('.user-name-label');
 
     const episodeInput = document.getElementById('episodeInput');
     const syncBtn = document.getElementById('syncBtn');
@@ -83,17 +87,52 @@
                         <div style="margin-top: 10px; font-weight: bold;">${title}</div>
                     `;
 
-                    div.addEventListener('click', () => {
+                    div.addEventListener('click', async () => {
                         // Deselect others
                         document.querySelectorAll('.anime-card').forEach(c => c.classList.remove('selected'));
                         div.classList.add('selected');
 
                         // Show Sync Section
                         selectedAnimeIdInput.value = anime.id;
-                        selectedAnimeTitle.textContent = title;
+                        const totalEpisodes = anime.episodes ? anime.episodes : 'Unknown';
+                        selectedAnimeTitle.textContent = `${title} (Total: ${totalEpisodes} episodes)`;
                         syncSection.style.display = 'block';
                         syncResult.innerHTML = ''; // clear previous results
                         syncSection.scrollIntoView({ behavior: 'smooth' });
+
+                        // Fetch progress for each user
+                        userLabels.forEach(label => {
+                            label.textContent = label.getAttribute('data-original-name');
+                        });
+
+                        const allCheckboxes = document.querySelectorAll('input[name="selectedUsers"]');
+                        const userIds = Array.from(allCheckboxes).map(cb => cb.value);
+
+                        if (userIds.length > 0) {
+                            progressLoader.style.display = 'block';
+                            try {
+                                const progressRes = await fetch(`/api/progress?animeId=${anime.id}&userIds=${userIds.join(',')}`);
+                                const progressData = await progressRes.json();
+
+                                if (progressData.results) {
+                                    progressData.results.forEach(userProgress => {
+                                        const label = document.querySelector(`.user-name-label[data-user-id="${userProgress.userId}"]`);
+                                        if (label) {
+                                            const originalName = label.getAttribute('data-original-name');
+                                            if (userProgress.error) {
+                                                label.textContent = `${originalName} (Error: ${userProgress.error})`;
+                                            } else {
+                                                label.textContent = `${originalName} (Current: Episode ${userProgress.progress}/${totalEpisodes})`;
+                                            }
+                                        }
+                                    });
+                                }
+                            } catch (err) {
+                                console.error('Failed to fetch user progress', err);
+                            } finally {
+                                progressLoader.style.display = 'none';
+                            }
+                        }
                     });
 
                     searchResults.appendChild(div);
