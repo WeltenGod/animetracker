@@ -49,6 +49,7 @@ app.get('/api/search', async (req, res) => {
                         coverImage {
                             large
                         }
+                        episodes
                     }
                 }
             }
@@ -70,6 +71,73 @@ app.get('/api/search', async (req, res) => {
         console.error("Search Error:", error.response ? error.response.data : error.message);
         res.status(500).json({ error: 'Failed to search AniList' });
     }
+});
+
+app.get('/api/progress', async (req, res) => {
+    const { animeId, userIds } = req.query;
+
+    if (!animeId || !userIds) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+
+    const userIdArray = userIds.split(',').map(id => parseInt(id, 10));
+    const results = [];
+
+    const graphqlQuery = `
+        query ($mediaId: Int) {
+            Media (id: $mediaId) {
+                mediaListEntry {
+                    id
+                    status
+                    progress
+                }
+            }
+        }
+    `;
+
+    for (const userId of userIdArray) {
+        // Fetch user from DB
+        const stmt = db.prepare('SELECT name, anilist_token FROM users WHERE id = ?');
+        const user = stmt.get(userId);
+
+        if (!user || !user.anilist_token) {
+            results.push({ userId, name: user?.name || 'Unknown', error: 'No AniList token found.' });
+            continue;
+        }
+
+        try {
+            const response = await axios.post('https://graphql.anilist.co', {
+                query: graphqlQuery,
+                variables: {
+                    mediaId: parseInt(animeId)
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${user.anilist_token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                }
+            });
+
+            const media = response.data.data.Media;
+            if (media && media.mediaListEntry) {
+                results.push({ userId, name: user.name, progress: media.mediaListEntry.progress || 0 });
+            } else {
+                // Not on their list
+                results.push({ userId, name: user.name, progress: 0 });
+            }
+        } catch (error) {
+            if (error.response && error.response.status === 404) {
+                // Not found is expected if they haven't added it to their list
+                results.push({ userId, name: user.name, progress: 0 });
+            } else {
+                console.error(`Progress Error for user ${user.name}:`, error.response ? error.response.data : error.message);
+                results.push({ userId, name: user.name, error: 'API Error' });
+            }
+        }
+    }
+
+    res.json({ results });
 });
 
 app.post('/api/sync', async (req, res) => {
