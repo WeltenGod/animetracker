@@ -1,4 +1,5 @@
 require('dotenv').config();
+const fs = require('fs');
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
@@ -133,7 +134,76 @@ app.get('/', (req, res) => {
     const stmt = db.prepare('SELECT id, name FROM users');
     const users = stmt.all();
 
-    res.render('index', { successMsg, users });
+    res.render('home', { successMsg, users });
+});
+
+app.get('/users', (req, res) => {
+    const successMsg = req.query.success;
+
+    // Fetch all connected users
+    const stmt = db.prepare('SELECT id, name FROM users');
+    const users = stmt.all();
+
+    res.render('users', { successMsg, users });
+});
+
+app.get('/settings', (req, res) => {
+    const successMsg = req.query.success;
+
+    // Read current .env file or use process.env as fallback
+    let envData = {};
+    try {
+        const envFile = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+        envFile.split('\n').forEach(line => {
+            const match = line.match(/^([^=]+)=(.*)$/);
+            if (match) {
+                envData[match[1].trim()] = match[2].trim();
+            }
+        });
+    } catch (err) {
+        console.warn('Could not read .env file, using process.env fallbacks');
+    }
+
+    // Default env structure based on what should be editable
+    const env = {
+        PORT: envData.PORT || process.env.PORT || '3000',
+        SESSION_SECRET: envData.SESSION_SECRET || process.env.SESSION_SECRET || '',
+        ANILIST_CLIENT_ID: envData.ANILIST_CLIENT_ID || process.env.ANILIST_CLIENT_ID || '',
+        ANILIST_CLIENT_SECRET: envData.ANILIST_CLIENT_SECRET || process.env.ANILIST_CLIENT_SECRET || '',
+        ANILIST_REDIRECT_URI: envData.ANILIST_REDIRECT_URI || process.env.ANILIST_REDIRECT_URI || ''
+    };
+
+    res.render('settings', { successMsg, env });
+});
+
+app.post('/api/settings', (req, res) => {
+    const { PORT, SESSION_SECRET, ANILIST_CLIENT_ID, ANILIST_CLIENT_SECRET, ANILIST_REDIRECT_URI } = req.body;
+
+    if (!PORT || !SESSION_SECRET || !ANILIST_CLIENT_ID || !ANILIST_CLIENT_SECRET || !ANILIST_REDIRECT_URI) {
+        return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    try {
+        const envContent = `PORT=${PORT}
+SESSION_SECRET=${SESSION_SECRET}
+ANILIST_CLIENT_ID=${ANILIST_CLIENT_ID}
+ANILIST_CLIENT_SECRET=${ANILIST_CLIENT_SECRET}
+ANILIST_REDIRECT_URI=${ANILIST_REDIRECT_URI}
+`;
+        fs.writeFileSync(path.join(__dirname, '.env'), envContent);
+
+        // Respond to the client before restarting
+        res.json({ success: true, message: 'Settings saved. Restarting...' });
+
+        // Gracefully exit so PM2/systemd restarts the application
+        setTimeout(() => {
+            console.log('Restarting application due to settings change...');
+            process.exit(0);
+        }, 1000);
+    } catch (err) {
+        console.error('Error saving .env file:', err);
+        res.status(500).json({ error: 'Failed to save settings to .env file' });
+    }
 });
 
 app.listen(port, () => {
