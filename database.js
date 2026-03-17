@@ -10,11 +10,7 @@ db.exec(`
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         anilist_token TEXT,
-        anilist_id INTEGER,
-        mal_token TEXT,
-        mal_refresh_token TEXT,
-        mal_expires_in INTEGER,
-        mal_token_created_at INTEGER
+        anilist_id INTEGER
     )
 `);
 
